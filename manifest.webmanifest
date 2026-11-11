@@ -1,0 +1,9 @@
+{
+  "name": "OneName 角色聊天",
+  "short_name": "OneName",
+  "start_url": "./",
+  "display": "standalone",
+  "background_color": "#16131c",
+  "theme_color": "#16131c",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml" }]
+}

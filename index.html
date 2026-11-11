@@ -1,0 +1,151 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content">
+<meta name="theme-color" content="#16131c">
+<title>OneName 角色聊天</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+<script src="coi.js"></script>
+</head>
+<body>
+<div id="app">
+
+  <!-- 角色列表 -->
+  <section id="view-home" class="view active">
+    <header class="bar">
+      <h1>角色</h1>
+      <div class="bar-actions">
+        <button class="icon-btn" data-go="settings" aria-label="设置">⚙︎</button>
+      </div>
+    </header>
+    <div id="model-status" class="status-pill" data-go="settings">未加载模型 · 点这里设置</div>
+    <div id="char-list" class="char-list"></div>
+    <div class="fab-row">
+      <label class="btn ghost">导入角色卡<input id="import-card" type="file" accept=".png,.json,image/png,application/json" hidden></label>
+      <button class="btn primary" id="btn-new-char">＋ 新建角色</button>
+    </div>
+  </section>
+
+  <!-- 编辑角色 -->
+  <section id="view-edit" class="view">
+    <header class="bar">
+      <button class="icon-btn" data-go="home" aria-label="返回">‹</button>
+      <h1 id="edit-title">新建角色</h1>
+      <button class="icon-btn danger" id="btn-del-char" aria-label="删除">🗑</button>
+    </header>
+    <form id="char-form" class="form">
+      <div class="avatar-row">
+        <label class="avatar big" id="avatar-preview">
+          <span>＋</span>
+          <input id="avatar-input" type="file" accept="image/*" hidden>
+        </label>
+        <div class="grow">
+          <label>名字<input name="name" required maxlength="40" placeholder="角色名字"></label>
+          <label>年龄（必须 ≥ 18）<input name="age" type="number" min="18" max="9999" required placeholder="例如 24"></label>
+        </div>
+      </div>
+      <label>一句话简介<input name="tagline" maxlength="80" placeholder="显示在角色列表里"></label>
+      <label>性格与设定<textarea name="persona" rows="6" placeholder="外貌、性格、说话方式、喜好、和你的关系……"></textarea></label>
+      <label>场景 / 世界观<textarea name="scenario" rows="3" placeholder="故事发生在哪里、现在是什么情况"></textarea></label>
+      <label>开场白<textarea name="greeting" rows="3" placeholder="角色说的第一句话"></textarea></label>
+      <label>示例对话（可选）<textarea name="examples" rows="3" placeholder="写几句角色的说话风格示范"></textarea></label>
+      <p id="form-error" class="error" hidden></p>
+      <button class="btn primary block" type="submit">保存</button>
+    </form>
+  </section>
+
+  <!-- 聊天 -->
+  <section id="view-chat" class="view">
+    <header class="bar">
+      <button class="icon-btn" data-go="home" aria-label="返回">‹</button>
+      <div class="chat-head">
+        <div class="avatar small" id="chat-avatar"></div>
+        <h1 id="chat-name"></h1>
+      </div>
+      <div class="bar-actions">
+        <button class="icon-btn" id="btn-chat-menu" aria-label="更多">⋯</button>
+      </div>
+    </header>
+    <div id="chat-menu" class="menu" hidden>
+      <button data-act="edit">编辑角色</button>
+      <button data-act="regen">重新生成最后一条</button>
+      <button data-act="undo">删除最后一轮</button>
+      <button data-act="export">导出聊天记录</button>
+      <button data-act="clear" class="danger">清空聊天</button>
+    </div>
+    <div id="messages" class="messages"></div>
+    <form id="composer" class="composer">
+      <textarea id="input" rows="1" placeholder="说点什么…  *动作用星号*"></textarea>
+      <button class="btn primary" id="btn-send" type="submit">发送</button>
+    </form>
+  </section>
+
+  <!-- 设置 -->
+  <section id="view-settings" class="view">
+    <header class="bar">
+      <button class="icon-btn" data-go="home" aria-label="返回">‹</button>
+      <h1>设置</h1>
+      <span></span>
+    </header>
+    <div class="form">
+      <h2>你的名字</h2>
+      <label>角色怎么称呼你<input id="set-username" maxlength="30" placeholder="你"></label>
+
+      <h2>模型来源</h2>
+      <div class="seg" id="backend-seg">
+        <button data-backend="local">手机本地运行</button>
+        <button data-backend="api">在线 API</button>
+      </div>
+
+      <div id="backend-local" class="panel">
+        <p class="hint">模型在手机浏览器里运行，聊天内容不会上传。需要 GGUF 格式，建议 1B～4B、Q4_K_M 量化，单文件小于 2GB。</p>
+        <label>模型下载地址（Hugging Face 的 .gguf 直链）
+          <input id="set-model-url" inputmode="url" placeholder="https://huggingface.co/用户/仓库/resolve/main/xxx-Q4_K_M.gguf">
+        </label>
+        <button class="btn primary block" id="btn-load-url">下载并加载（下载一次后会缓存）</button>
+        <div class="or">或者</div>
+        <label class="btn ghost block">从手机文件里选 .gguf<input id="model-file" type="file" accept=".gguf" hidden></label>
+        <div id="load-progress" class="progress" hidden><div></div><span></span></div>
+        <details>
+          <summary>高级参数</summary>
+          <label>上下文长度 n_ctx<input id="set-nctx" type="number" min="512" max="32768" step="512"></label>
+          <label>GPU 加速（WebGPU，手机不稳定可关）
+            <select id="set-gpu"><option value="auto">自动</option><option value="off">关闭</option></select>
+          </label>
+        </details>
+        <button class="btn ghost block" id="btn-clear-cache">清除已缓存的模型文件</button>
+      </div>
+
+      <div id="backend-api" class="panel" hidden>
+        <p class="hint">任何兼容 OpenAI 格式的接口都能用。Key 只保存在你这台手机的浏览器里。</p>
+        <label>接口地址 Base URL<input id="set-api-base" inputmode="url" placeholder="https://xxx/v1"></label>
+        <label>API Key<input id="set-api-key" type="password" autocomplete="off"></label>
+        <label>模型名<input id="set-api-model" placeholder="模型 ID"></label>
+      </div>
+
+      <h2>生成参数</h2>
+      <label>温度 temperature <output id="out-temp"></output><input id="set-temp" type="range" min="0" max="2" step="0.05"></label>
+      <label>每次最多回复字数 max_tokens<input id="set-maxtok" type="number" min="32" max="4096" step="32"></label>
+
+      <h2>系统提示词</h2>
+      <p class="hint">{{char}} 会替换成角色名，{{user}} 替换成你的名字。</p>
+      <textarea id="set-system" rows="7"></textarea>
+      <button class="btn ghost block" id="btn-reset-system">恢复默认提示词</button>
+
+      <h2>数据</h2>
+      <div class="row">
+        <button class="btn ghost grow" id="btn-backup">备份全部数据</button>
+        <label class="btn ghost grow">恢复备份<input id="restore-file" type="file" accept=".json" hidden></label>
+      </div>
+      <p class="hint small">所有角色和聊天只保存在本机浏览器里。清除浏览器数据会丢失，记得备份。</p>
+    </div>
+  </section>
+
+</div>
+<div id="toast" class="toast" hidden></div>
+<script type="module" src="app.js"></script>
+</body>
+</html>
