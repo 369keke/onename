@@ -13,7 +13,7 @@ const DEFAULT_SETTINGS = {
   username: '你',
   backend: 'local',
   modelUrl: '',
-  nCtx: 4096,
+  nCtx: 2048,
   gpu: 'auto',
   apiBase: '',
   apiKey: '',
@@ -463,6 +463,16 @@ const local = {
   loaded: false,
   loading: null,
   label: '',
+  lastSource: null, // URL string or File, so we can reload after a crash
+  safeMode: false,  // set after a crash: CPU only, smaller context
+
+  // Throw away a crashed/stuck wasm instance.
+  async reset() {
+    const w = this.wllama;
+    this.wllama = null;
+    this.loaded = false;
+    if (w) await Promise.race([w.exit().catch(() => {}), new Promise((r) => setTimeout(r, 1500))]);
+  },
 
   async ensureLib() {
     if (this.wllama) return this.wllama;
@@ -473,12 +483,13 @@ const local = {
 
   contextSize() {
     try { if (this.loaded) return this.wllama.getLoadedContextInfo().n_ctx; } catch {}
-    return Number(settings.nCtx) || 4096;
+    return this.safeMode ? Math.min(Number(settings.nCtx) || 2048, 2048) : Number(settings.nCtx) || 2048;
   },
 
   params() {
-    const p = { n_ctx: Number(settings.nCtx) || 4096 };
-    if (settings.gpu === 'off') p.n_gpu_layers = 0;
+    const p = { n_ctx: Number(settings.nCtx) || 2048 };
+    if (settings.gpu === 'off' || this.safeMode) p.n_gpu_layers = 0;
+    if (this.safeMode) p.n_ctx = Math.min(p.n_ctx, 2048);
     return p;
   },
 
@@ -491,9 +502,9 @@ const local = {
       $('span', bar).textContent = text;
     };
     this.loading = (async () => {
-      const w = await this.ensureLib();
-      if (this.loaded) { await w.exit(); this.wllama = null; this.loaded = false; await this.ensureLib(); }
-      const wl = this.wllama;
+      if (this.wllama) await this.reset();
+      const wl = await this.ensureLib();
+      this.lastSource = source;
       status('正在加载模型…', 'busy');
       if (source instanceof Blob) {
         const magic = new TextDecoder().decode(await source.slice(0, 4).arrayBuffer());
@@ -516,26 +527,56 @@ const local = {
       this.loaded = true;
       const threads = wl.isMultithread() ? `${wl.getNumThreads()} 线程` : '单线程';
       setBar(1, '加载完成');
-      status(`✓ 本地模型：${this.label}（${threads}）`, 'ok');
+      status(`✓ 本地模型：${this.label}（${threads}${this.safeMode ? '，省内存模式' : ''}）`, 'ok');
     })();
     try { await this.loading; }
     catch (err) {
       if (/failed to fetch|networkerror|load failed/i.test(err.message || '')) {
         err.message = '网络连不上模型服务器（Failed to fetch）。可以试试：VPN 开全局模式；或先用浏览器把 .gguf 下载到手机，再点「从手机文件里选」';
       }
-      this.loaded = false;
+      await this.reset();
       status('模型加载失败 · 点这里重试', '');
       setBar(0, '加载失败：' + (err.message || err));
       throw err;
     } finally { this.loading = null; }
   },
 
+  async ensureLoaded() {
+    if (this.loaded) return;
+    if (this.loading) { await this.loading; return; }
+    const src = this.lastSource || settings.modelUrl;
+    if (!src) throw new Error('还没有加载模型，请到设置里选择模型');
+    toast('正在加载模型…');
+    await this.load(src);
+  },
+
+  isCrash(err) {
+    return /crash|abort|RuntimeError|out of memory|memory access|unreachable|device (was )?lost|webgpu/i.test(String(err?.message || err));
+  },
+
   async *generate(msgs, signal) {
-    if (!this.loaded) {
-      if (this.loading) await this.loading;
-      else if (settings.modelUrl) { toast('正在加载上次的模型…'); await this.load(settings.modelUrl); }
-      else throw new Error('还没有加载模型，请到设置里选择模型');
+    let yielded = false;
+    try {
+      for await (const piece of this.stream(msgs, signal)) { yielded = true; yield piece; }
+    } catch (err) {
+      if (!this.isCrash(err) || signal.aborted) throw err;
+      console.warn('wllama crashed, reloading', err);
+      const wasSafe = this.safeMode;
+      this.safeMode = true;
+      await this.reset();
+      if (yielded || wasSafe) {
+        throw new Error(wasSafe
+          ? '模型又崩溃了，多半是手机内存不够。请换一个更小的模型（比如 1.5B 或 1B），或者关掉其他 App 后刷新网页再试。'
+          : '模型崩溃了，已切换到省内存模式，请再发一次。');
+      }
+      toast('模型崩溃了，正在用省内存模式重新加载…', 4000);
+      await this.ensureLoaded();
+      for await (const piece of this.stream(msgs, signal)) yield piece;
     }
+  },
+
+  async *stream(msgs, signal) {
+    await this.ensureLoaded();
     const stream = await this.wllama.createChatCompletion({
       messages: msgs,
       stream: true,
