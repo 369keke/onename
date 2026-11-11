@@ -520,6 +520,9 @@ const local = {
     })();
     try { await this.loading; }
     catch (err) {
+      if (/failed to fetch|networkerror|load failed/i.test(err.message || '')) {
+        err.message = '网络连不上模型服务器（Failed to fetch）。可以试试：VPN 开全局模式；或先用浏览器把 .gguf 下载到手机，再点「从手机文件里选」';
+      }
       this.loaded = false;
       status('模型加载失败 · 点这里重试', '');
       setBar(0, '加载失败：' + (err.message || err));
